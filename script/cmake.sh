@@ -7,8 +7,8 @@
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=16
 #SBATCH --job-name=gs_lp
-#SBATCH --output=/N/slate/yuzih/Graphstorm/logs/job-%j.out
-#SBATCH --error=/N/slate/yuzih/Graphstorm/logs/job-%j.err
+#SBATCH --output=/N/slate/yuzih/DGL/DistTraining/logs/job-%j.out
+#SBATCH --error=/N/slate/yuzih/DGL/DistTraining/logs/job-%j.err
 #SBATCH --time=01:00:00
 # -------------------------
 source /N/slate/yuzih/miniconda3/etc/profile.d/conda.sh

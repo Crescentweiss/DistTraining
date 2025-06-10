@@ -4,6 +4,9 @@
 # 排除所有数据目录
 dataset/
 
+# ignore logs
+logs/
+
 # 但允许保留空目录的占位文件（可选）
 !dataset/.keep
 !processed_data/.keep
@@ -17,3 +20,10 @@ dataset/
 *.npz
 *.dgl
 *.pt
+
+# ignore IP and port config
+script/ip_config.txt
+script/port_config.txt
+
+# ignore pycaches
+__pycache__/
