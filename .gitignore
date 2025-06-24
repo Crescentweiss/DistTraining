@@ -27,3 +27,6 @@ script/port_config.txt
 
 # ignore pycaches
 __pycache__/
+
+# ignore profiler files
+profiler_traces/

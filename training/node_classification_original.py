@@ -136,6 +136,7 @@ def run(args, device, data):
         tic = time.time()
         # Various time statistics.
         sample_time = 0
+        data_2_device_time = 0
         forward_time = 0
         backward_time = 0
         update_time = 0
@@ -144,171 +145,64 @@ def run(args, device, data):
         start = time.time()
         step_time = []
 
-        # 新增：通信时间统计
-        total_local_time = 0
-        total_remote_time = 0
-        total_local_nodes = 0
-        total_remote_nodes = 0
-
         with model.join():
             for step, (input_nodes, seeds, blocks) in enumerate(dataloader):
                 tic_step = time.time()
-                sample_time += tic_step - start
-                # # Slice feature and label.
+                # sample_time += tic_step - start
+                # Slice feature and label.
                 # batch_inputs = g.ndata["features"][input_nodes]
                 # batch_labels = g.ndata["labels"][seeds].long()
-
-                # 分析当前batch的通信需求
-                comm_analysis = analyze_cross_node_comm(g, input_nodes, blocks, trainers_per_node=2)
-
-                # 测量特征访问时间
-                feature_times = time_feature_access(g, 
-                                                comm_analysis['local_node_ids'], 
-                                                comm_analysis['remote_node_ids'])
-                
-                # 累积时间统计
-                total_local_time += feature_times['local_time']
-                total_remote_time += feature_times['remote_time']
-                total_local_nodes += feature_times['local_count']
-                total_remote_nodes += feature_times['remote_count']
-                # 注意：这里不再重复获取特征，因为time_feature_access已经获取过了
-                # 直接使用time_feature_access的结果或重新获取
+                # num_seeds += len(blocks[-1].dstdata[dgl.NID])
+                # num_inputs += len(blocks[0].srcdata[dgl.NID])
+                # tic_step = time.time()
+                # sample_time += tic_step - start                
+                start_sample = time.time()
                 batch_inputs = g.ndata["features"][input_nodes]
                 batch_labels = g.ndata["labels"][seeds].long()
-
-                # 打印通信分析结果
-                if step % args.log_every == 0:
-                    import socket
-                    current_host = socket.gethostname()
-                    current_rank = g.rank()
-                    device_info = f"GPU:{device}" if th.cuda.is_available() else "CPU"
-                    
-                    # 计算平均时间
-                    avg_local_time = (feature_times['local_time'] / feature_times['local_count'] * 1000 
-                                    if feature_times['local_count'] > 0 else 0)
-                    avg_remote_time = (feature_times['remote_time'] / feature_times['remote_count'] * 1000 
-                                    if feature_times['remote_count'] > 0 else 0)
-                    
-                    print(f"[{current_host}|Rank:{current_rank}|{device_info}] Batch {step}: "
-                        f"Remote: {comm_analysis['remote_nodes']}/{comm_analysis['total_nodes']} "
-                        f"({comm_analysis['remote_ratio']*100:.1f}%), "
-                        f"Comm: {comm_analysis['estimated_comm_bytes']/1024:.1f} KB")
-                    
-                    print(f"[{current_host}|Rank:{current_rank}] Feature Time: "
-                        f"Local: {feature_times['local_time']*1000:.2f}ms "
-                        f"({feature_times['local_count']} nodes, {avg_local_time:.3f}ms/node), "
-                        f"Remote: {feature_times['remote_time']*1000:.2f}ms "
-                        f"({feature_times['remote_count']} nodes, {avg_remote_time:.3f}ms/node)")
-                    
-                    print(f"[{current_host}|Rank:{current_rank}] Partitions: {comm_analysis['partition_distribution']}")
-                
                 num_seeds += len(blocks[-1].dstdata[dgl.NID])
                 num_inputs += len(blocks[0].srcdata[dgl.NID])
-                # # Move to target device.
+                end_sample = time.time()
+                sample_time += end_sample - start_sample
+                # Move to target device.
                 # blocks = [block.to(device) for block in blocks]
                 # batch_inputs = batch_inputs.to(device)
                 # batch_labels = batch_labels.to(device)
-                # 统计CPU到GPU的数据传输时间
-                device_transfer_start = time.time()
+                # data_device = time.time()
+                # data_2_device_time += data_device - tic_step
+                start_copy = time.time()
                 blocks = [block.to(device) for block in blocks]
                 batch_inputs = batch_inputs.to(device)
                 batch_labels = batch_labels.to(device)
-                device_transfer_time = time.time() - device_transfer_start
-                # 累积设备传输时间统计
-                if 'total_device_transfer_time' not in locals():
-                    total_device_transfer_time = 0
-                    device_transfer_count = 0
-                total_device_transfer_time += device_transfer_time
-                device_transfer_count += 1
-                # 定期打印设备传输时间
-                if step % args.log_every == 0:
-                    avg_transfer_time = total_device_transfer_time / device_transfer_count * 1000
-                    print(f"[GPU Transfer] Step {step}: Current {device_transfer_time*1000:.2f}ms, "
-                          f"Average {avg_transfer_time:.2f}ms per batch")
-
+                end_copy = time.time()
+                data_2_device_time += end_copy - start_copy
                 # Compute loss and prediction.
-                start = time.time()
-                
-                ############# 手动profiler结束 #############
-                # 创建profiler（只在特定step启用以避免性能开销）
-                if step % args.log_every == 0 and step < 100:  # 只在前100个step的log步骤启用
-                    with profile(
-                        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                        record_shapes=True,
-                        profile_memory=True,
-                        with_stack=True,
-                        with_flops=True,
-                        with_modules=True
-                    ) as prof:
-                        with record_function("forward_pass"):
-                            batch_pred = model(blocks, batch_inputs)
-                        
-                        with record_function("loss_computation"):
-                            loss = loss_fcn(batch_pred, batch_labels)
-                        
-                        forward_end = time.time()
-                        
-                        with record_function("backward_pass"):
-                            optimizer.zero_grad()
-                            loss.backward()
-                        
-                        compute_end = time.time()
-                        
-                        with record_function("parameter_update"):
-                            optimizer.step()
-                    # 保存profiler结果
-                    trace_dir = "/N/slate/yuzih/DGL/DistTraining/profiler_traces/nccl"
-                    os.makedirs(trace_dir, exist_ok=True)
-                    # 保存profiler结果到指定目录
-                    trace_file = os.path.join(trace_dir, f"trace_rank_{g.rank()}_step_{step}.json")
-                    prof.export_chrome_trace(trace_file)
-                    print(f"Trace file saved to: {trace_file}")
-                    # 打印关键操作的统计信息
-                    print(f"\n=== Profiler Results for Rank {g.rank()}, Step {step} ===")
-                    # 按函数分组统计
-                    print("Top operations by CPU time:")
-                    print(prof.key_averages(group_by_input_shape=True).table(
-                        sort_by="cpu_time_total", row_limit=10))
-                    if th.cuda.is_available():
-                        print("\nTop operations by CUDA time:")
-                        print(prof.key_averages(group_by_input_shape=True).table(
-                            sort_by="cuda_time_total", row_limit=10))
-                    # 查找通信相关的操作
-                    events = prof.key_averages()
-                    comm_events = []
-                    for event in events:
-                        if any(keyword in event.key.lower() for keyword in 
-                              ['DistributedDataParallel.forward', 'backward_pass', 'gloo', 'nccl']):
-                            comm_events.append(event)
-                    if comm_events:
-                        print(f"\n=== Communication Operations ===")
-                        for event in comm_events:
-                            print(f"{event.key}: CPU {event.cpu_time_total/1000:.2f}ms, "
-                                  f"CUDA {event.cuda_time_total/1000:.2f}ms, "
-                                  f"Count: {event.count}")
-                    print("=" * 60)
-                else:
-                    # 正常执行，不启用profiler
-                    batch_pred = model(blocks, batch_inputs)
-                    loss = loss_fcn(batch_pred, batch_labels)
-                    forward_end = time.time()
-                    optimizer.zero_grad()
-                    loss.backward()
-                    compute_end = time.time()
-                ############# 手动profiler结束 #############
-
+                # start = time.time()
                 # batch_pred = model(blocks, batch_inputs)
                 # loss = loss_fcn(batch_pred, batch_labels)
                 # forward_end = time.time()
                 # optimizer.zero_grad()
                 # loss.backward()
                 # compute_end = time.time()
-                # 统计各个阶段的时间
-                forward_time += forward_end - start
-                backward_time += compute_end - forward_end
+                # forward_time += forward_end - start
+                # backward_time += compute_end - forward_end
+                start_forward = time.time()
+                batch_pred = model(blocks, batch_inputs)
+                loss = loss_fcn(batch_pred, batch_labels)
+                end_forward = time.time()
+                forward_time += end_forward - start_forward
 
+                start_backward = time.time()
+                optimizer.zero_grad()
+                loss.backward()
+                end_backward = time.time()
+                backward_time += end_backward - start_backward
+
+                # optimizer.step()
+                # update_time += time.time() - compute_end
+                start_update = time.time()
                 optimizer.step()
-                update_time += time.time() - compute_end
+                end_update = time.time()
+                update_time += end_update - start_update
 
                 step_t = time.time() - tic_step
                 step_time.append(step_t)
@@ -332,26 +226,13 @@ def run(args, device, data):
                 start = time.time()
 
         toc = time.time()
-
-        avg_local_per_node = (total_local_time / total_local_nodes * 1000 
-                            if total_local_nodes > 0 else 0)
-        avg_remote_per_node = (total_remote_time / total_remote_nodes * 1000 
-                            if total_remote_nodes > 0 else 0)
-        
-        print(f"Part {g.rank()}, Epoch {epoch} Feature Access Summary:")
-        print(f"  Local: {total_local_time:.4f}s ({total_local_nodes} nodes, {avg_local_per_node:.3f}ms/node)")
-        print(f"  Remote: {total_remote_time:.4f}s ({total_remote_nodes} nodes, {avg_remote_per_node:.3f}ms/node)")
-        print(f"  Device Transfer: {total_device_transfer_time:.4f}s ({device_transfer_count} batches, "
-               f"{total_device_transfer_time/device_transfer_count*1000:.2f}ms/batch)")
-        # print(f"  Local vs Remote speed ratio: {avg_remote_per_node/avg_local_per_node:.2f}x" 
-        #     if avg_local_per_node > 0 else "")
-
-        # print(
-        #     f"Part {g.rank()}, Epoch Time(s): {toc - tic:.4f}, "
-        #     f"sample+data_copy: {sample_time:.4f}, forward: {forward_time:.4f},"
-        #     f" backward: {backward_time:.4f}, update: {update_time:.4f}, "
-        #     f"#seeds: {num_seeds}, #inputs: {num_inputs}"
-        # )
+        print(
+            f"Part {g.rank()}, Epoch Time(s): {toc - tic:.4f}, "
+            # f"sample+data_copy: {sample_time:.4f}, forward: {forward_time:.4f},"
+            f"sample+data_copy: {sample_time:.4f}, data_2_device: {data_2_device_time:.4f}, "
+            f"forward: {forward_time:.4f}, backward: {backward_time:.4f}, update: {update_time:.4f}, "
+            f"#seeds: {num_seeds}, #inputs: {num_inputs}"
+        )
         epoch_time.append(toc - tic)
 
         if epoch % args.eval_every == 0 or epoch == args.num_epochs:

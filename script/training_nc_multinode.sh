@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH -p gpu-debug
+#SBATCH -p gpu
 #SBATCH -A c01062
-#SBATCH --nodes=2
-#SBATCH --gpus=4
+#SBATCH --nodes=4
+#SBATCH --gpus=8
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=16
-#SBATCH --job-name=gs_lp
-#SBATCH --output=/N/slate/yuzih/DGL/DistTraining/logs/yelp/job%j_nccl.out
-#SBATCH --error=/N/slate/yuzih/DGL/DistTraining/logs/yelp/job%j_nccl.err
+#SBATCH --job-name=gs_nc
+#SBATCH --output=/N/slate/yuzih/DGL/DistTraining/logs/reddit/multi-job-%j_nccl.out
+#SBATCH --error=/N/slate/yuzih/DGL/DistTraining/logs/reddit/multi-job-%j_nccl.err
 #SBATCH --time=01:00:00
 # -------------------------
 echo "Job started at $(date)"
@@ -29,8 +29,8 @@ done > "$IP_CONFIG"
 echo "IP config:"
 cat "$IP_CONFIG"
 
-DATASET="yelp"
-PART_CONFIG="/N/slate/yuzih/DGL/DistTraining/dataset/parted_graph/yelp/yelp.json"
+DATASET="reddit"
+PART_CONFIG="/N/slate/yuzih/DGL/DistTraining/dataset/parted_graph/4reddit/reddit.json"
 WORKSPACE="/N/slate/yuzih/DGL"
 PYTHON_SCRIPT="/N/slate/yuzih/DGL/DistTraining/training/node_classification_original.py"
 
