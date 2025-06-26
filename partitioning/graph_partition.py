@@ -1,6 +1,7 @@
 import argparse
 import dgl
 import dgl.distributed
+import torch as th
 
 def partition_graph(
     graph,
@@ -42,6 +43,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     g = dgl.load_graphs(args.graph_path)[0][0]
+    # ---- Clean NaN in labels and set num_classes ----
+    if 'labels' in g.ndata:
+        labels = g.ndata['labels']
+        # 如果是二维标签，如 (N, 1)，先 squeeze
+        if labels.dim() > 1 and labels.size(1) == 1:
+            labels = labels.squeeze(1)
+        # 替换 NaN 为 0
+        labels = th.where(th.isnan(labels), th.zeros_like(labels), labels)
+        g.ndata['labels'] = labels.long()  # 确保标签为 long 类型
+        g.num_classes = int(labels.max().item()) + 1
+        print(f"Number of classes inferred (NaN set to 0): {g.num_classes}")
+    else:
+        print("Warning: 'labels' field not found in ndata. Cannot set num_classes.")
+    
     partition_graph(
         g,
         args.dataset,

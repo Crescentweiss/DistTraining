@@ -21,18 +21,22 @@ def load_dataset(name, self_loop=True):
         data = YelpDataset()
         g = data[0]
         g.ndata["features"] = g.ndata.pop("feat")
-        # 原始多标签：[N, C]
         multi_label = g.ndata.pop("label").float()
-        # 找到标签不全为 0 的节点（即至少属于一个类别）
+
+        # 只保留有标签的节点
         valid_mask = multi_label.sum(dim=1) > 0
         valid_idx = valid_mask.nonzero(as_tuple=True)[0]
-        # 创建子图，只保留 valid 节点
         g = dgl.node_subgraph(g, valid_idx)
-        # 将多标签转换为单标签（主类别）
+
+        # 多标签转为单标签
         single_label = multi_label[valid_idx].argmax(dim=1).long()
         g.ndata["labels"] = single_label
 
-        return g, multi_label.shape[1]
+        # 保存类别数（可选：供调试打印用）
+        n_classes = single_label.max().item() + 1
+        print(f"Yelp processed into single-label with {n_classes} classes")
+
+        return g, n_classes
     
     else:
         raise ValueError(f"Unknown dataset: {name}")
@@ -63,7 +67,7 @@ if __name__ == "__main__":
     if args.dataset == "reddit":
         g, _ = load_dataset("reddit", self_loop=True)
     elif args.dataset == "yelp":
-        g, _ = load_dataset("yelp",)
+        g, num_classes = load_dataset("yelp")
     else:
         raise RuntimeError(f"Unknown dataset: {args.dataset}")
     print(
@@ -72,3 +76,4 @@ if __name__ == "__main__":
     
     dgl.save_graphs(args.output, g)
     print("|V|={}, |E|={}".format(g.num_nodes(), g.num_edges()))
+    print(f"num_classes = {num_classes}")
